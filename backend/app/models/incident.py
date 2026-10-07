@@ -26,6 +26,8 @@ class Incident(Base):
 
     longitude = Column(Float)
 
+    address = Column(String, nullable=True)
+
     created_at = Column(DateTime, default=datetime.utcnow)
     verification_status = Column(String, default="pending")
     after_image = Column(String, nullable=True)

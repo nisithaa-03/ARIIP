@@ -1,9 +1,11 @@
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends
 from sqlalchemy.orm import Session
 
-from ai.detector import detect_hazard
+from ai.detector import detect_hazard, detect_live
 from app.database import get_db
 from app.models.incident import Incident
+from PIL import Image
+import io
 
 import os
 import uuid
@@ -19,6 +21,7 @@ async def upload_hazard(
     file: UploadFile = File(...),
     latitude: str = Form(None),
     longitude: str = Form(None),
+    address: str = Form(None),
     db: Session = Depends(get_db)
 ):
     try:
@@ -33,6 +36,7 @@ async def upload_hazard(
         print("File:", filename)
         print("Latitude:", latitude)
         print("Longitude:", longitude)
+        print("Address:", address)
 
         # Run YOLO detection
         prediction = detect_hazard(filepath)
@@ -51,8 +55,9 @@ async def upload_hazard(
             severity=prediction.get("severity", "Low"),
             confidence=prediction.get("confidence", 0),
             department=prediction.get("department", "Inspection Required"),
-            latitude=float(latitude) if latitude else None,
-            longitude=float(longitude) if longitude else None
+            latitude=float(latitude) if latitude and latitude.strip() else None,
+            longitude=float(longitude) if longitude and longitude.strip() else None,
+            address=address.strip() if address and address.strip() else None,
         )
 
         # Save to SQLite
@@ -69,6 +74,7 @@ async def upload_hazard(
             "department": db_incident.department,
             "latitude": db_incident.latitude,
             "longitude": db_incident.longitude,
+            "address": db_incident.address,
             "status": db_incident.status
         }
 
@@ -84,7 +90,27 @@ async def upload_hazard(
             detail=f"Upload failed: {str(e)}"
         )
 
+@router.post("/live-detect")
+async def live_detect(
+    file: UploadFile = File(...)
+):
+    try:
+        image_bytes = await file.read()
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            image.load()
+            detections = detect_live(image)
 
+        return {
+            "success": True,
+            "detections": detections
+        }
+
+    except Exception as e:
+        print("Live Detection Error:", str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=f"Live detection failed: {str(e)}"
+        )
 @router.get("/incidents")
 def get_incidents(db: Session = Depends(get_db)):
     incidents = db.query(Incident).all()
@@ -101,10 +127,47 @@ def get_incidents(db: Session = Depends(get_db)):
             "department": incident.department,
             "latitude": incident.latitude,
             "longitude": incident.longitude,
+            "address": incident.address,
             "created_at": incident.created_at
         }
         for incident in incidents
     ]
+
+
+@router.put("/incidents/{incident_id}/location")
+def update_incident_location(
+    incident_id: str,
+    latitude: str = Form(...),
+    longitude: str = Form(...),
+    address: str = Form(...),
+    db: Session = Depends(get_db)
+):
+    incident = (
+        db.query(Incident)
+        .filter(Incident.incident_id == incident_id)
+        .first()
+    )
+    if incident is None:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    try:
+        incident.latitude = float(latitude) if latitude.strip() else None
+        incident.longitude = float(longitude) if longitude.strip() else None
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail="Invalid GPS coordinates") from error
+
+    incident.address = address.strip() or None
+    db.commit()
+    db.refresh(incident)
+    return {
+        "success": True,
+        "incident_id": incident.incident_id,
+        "latitude": incident.latitude,
+        "longitude": incident.longitude,
+        "address": incident.address,
+    }
+
+
 @router.put("/incidents/{incident_id}/status")
 def update_status(
     incident_id: str,
