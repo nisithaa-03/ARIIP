@@ -15,9 +15,11 @@ import { DepartmentsView } from './components/departments/DepartmentsView';
 import { VerificationQueueView } from './components/verification/VerificationQueueView';
 import { SettingsView } from './components/settings/SettingsView';
 import { getCityByName, DEFAULT_INDIAN_CITY } from './data/indianLocations';
+import { useBrowserLocation } from './hooks/useBrowserLocation';
 
 
 export default function App() {
+  const { location: userLocation, gpsStatus, refreshLocation } = useBrowserLocation();
 
   const [incidents, setIncidents] =
   useState<Incident[]>([]);
@@ -36,23 +38,33 @@ export default function App() {
 
     severity: item.severity.toLowerCase(),
     status: item.status,
+    dateReported: item.created_at,
 
     department: item.department,
 
     priorityScore: Math.round(item.confidence),
 
     imageUrl: `http://127.0.0.1:8000/${item.image_path.replace(/\\/g, "/")}`,
+    latitude: item.latitude,
+    longitude: item.longitude,
     location: {
-  city: "Chennai",
-  state: "Tamil Nadu",
-  district: "Chennai",
-  address: `${item.latitude}, ${item.longitude}`,
+  city: item.city || "",
+  state: item.state || "",
+  district: "",
+  address:
+    item.address ||
+    (item.latitude != null && item.longitude != null
+      ? `${item.latitude}, ${item.longitude}`
+      : "GPS unavailable"),
+  street:
+    item.address ||
+    (item.latitude != null && item.longitude != null
+      ? `${item.latitude}, ${item.longitude}`
+      : "GPS unavailable"),
+  country: "India",
 
-  lat: item.latitude,
-  lng: item.longitude,
-
-  latitude: item.latitude,
-  longitude: item.longitude,
+  lat: item.latitude ?? null,
+  lng: item.longitude ?? null,
 },
 
     reportedBy: {
@@ -83,6 +95,12 @@ export default function App() {
   const currentCityInfo = useMemo(() => {
     return getCityByName(selectedCity) || DEFAULT_INDIAN_CITY;
   }, [selectedCity]);
+
+  useEffect(() => {
+    if (!userLocation) return;
+    if (userLocation.city) setSelectedCity(userLocation.city);
+    if (userLocation.state) setSelectedState(userLocation.state);
+  }, [userLocation]);
 
   // Dynamically resolved incidents for the selected city or nationwide
    const cityIncidents = incidents;
@@ -131,6 +149,17 @@ export default function App() {
   setSelectedIncidentId(incidents[0].id);
 }
   };
+  const handleRequestLocation = async () => {
+    try {
+      const location = await refreshLocation();
+      if (location.city && location.state) {
+        setSelectedCity(location.city);
+        setSelectedState(location.state);
+      }
+    } catch (error) {
+      console.warn('Unable to refresh current browser location:', error);
+    }
+  };
   const handleToggleAllIndia = () => {
     setIsAllIndia((prev) => !prev);
   };
@@ -162,8 +191,8 @@ export default function App() {
   const handleNewIncident = (newInc: Incident) => {
   setIncidents((prev) => [newInc, ...prev]);
 
-  setSelectedCity(newInc.location.city);
-  setSelectedState(newInc.location.state);
+  if (newInc.location.city) setSelectedCity(newInc.location.city);
+  if (newInc.location.state) setSelectedState(newInc.location.state);
   setIsAllIndia(false);
   setSelectedIncidentId(newInc.id);
   setActiveTab('complaints');
@@ -197,6 +226,7 @@ export default function App() {
           selectedCity={selectedCity}
           selectedState={selectedState}
           onCityChange={handleCityChange}
+          onRequestLocation={handleRequestLocation}
           isAllIndia={isAllIndia}
           onToggleAllIndia={handleToggleAllIndia}
         />
@@ -218,6 +248,8 @@ export default function App() {
   inProgressCount={inProgressCount}
   resolvedCount={resolvedCount}
   currentCityInfo={currentCityInfo}
+  userLocation={userLocation}
+  gpsStatus={gpsStatus}
   isAllIndia={isAllIndia}
 />
     </div>
@@ -236,6 +268,9 @@ export default function App() {
             onSubmitComplaint={handleNewIncident}
             initialCity={selectedCity}
             initialState={selectedState}
+            userLocation={userLocation}
+            gpsStatus={gpsStatus}
+            refreshLocation={refreshLocation}
           />
         )}
 

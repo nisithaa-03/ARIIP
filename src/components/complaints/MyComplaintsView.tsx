@@ -43,46 +43,58 @@ export const MyComplaintsView: React.FC<MyComplaintsViewProps> = ({
   const [activeTab, setActiveTab] = useState<'all' | 'open' | 'progress' | 'resolved'>('all');
 
   // Storing country, state, city, lat, and lng for every complaint
-  const allComplaints = (incidents || []).map((incident) => ({
-  id: incident.ticketNumber,
-  image: incident.imageUrl,
+  const allComplaints = (incidents || []).map((incident) => {
+  const lat = incident.latitude;
+  const lng = incident.longitude;
 
-  issueType: incident.title,
+  return {
+    id: incident.ticketNumber || incident.id,
 
-  street: incident.location.address,
-  district: incident.location.district,
+    image: incident.imageUrl,
 
-  city: incident.location.city,
-  state: incident.location.state,
-  country: "India",
+    issueType: incident.title || "Unknown Hazard",
 
-  status: incident.status,
+    street: incident.location.address || "GPS Location",
 
-  statusColor:
-    incident.status === "resolved"
-      ? "text-emerald-400 bg-emerald-400/10 border-emerald-500/30"
-      : incident.status === "verification"
-      ? "text-purple-400 bg-purple-400/10 border-purple-500/30"
-      : incident.status === "assigned"
-      ? "text-amber-400 bg-amber-400/10 border-amber-500/30"
-      : "text-blue-400 bg-blue-400/10 border-blue-500/30",
+    district: incident.location.district,
 
-  category:
-    incident.status === "resolved"
-      ? "resolved"
-      : incident.status === "assigned"
-      ? "open"
-      : "progress",
+    city: incident.location.city,
 
-  priority: incident.severity,
+    state: incident.location.state,
 
-  department: incident.department,
+    country: "India",
 
-  lat: incident.location.lat,
-  lng: incident.location.lng,
+    status: incident.status || "created",
 
-  date: "Recently Reported",
-}));
+    statusColor:
+      incident.status === "resolved"
+        ? "text-emerald-400 bg-emerald-400/10 border-emerald-500/30"
+        : incident.status === "verification"
+        ? "text-purple-400 bg-purple-400/10 border-purple-500/30"
+        : incident.status === "assigned"
+        ? "text-amber-400 bg-amber-400/10 border-amber-500/30"
+        : "text-blue-400 bg-blue-400/10 border-blue-500/30",
+
+    category:
+      incident.status === "resolved"
+        ? "resolved"
+        : incident.status === "assigned"
+        ? "open"
+        : "progress",
+
+    priority: incident.severity || "Unknown",
+
+    department: incident.department || "Roads Department",
+
+    // REAL GPS FROM BACKEND
+    lat: lat,
+    lng: lng,
+
+    date: incident.dateReported
+      ? new Date(incident.dateReported).toLocaleString()
+      : "Recently Reported",
+  };
+});
 console.log("incidents prop =", incidents);
 console.log("allComplaints =", allComplaints);
   // Location filter: nationwide or current city
@@ -200,12 +212,19 @@ console.log("cityComplaints", cityComplaints);
                     <MapPin className="w-3.5 h-3.5 text-red-400" />
                     {c.street}, {c.district}
                   </span>
-                  <span className="text-blue-400 font-semibold">
-                    {c.city}, {c.state} ({c.country})
-                  </span>
+                  {(c.city || c.state) && (
+                    <span className="text-blue-400 font-semibold">
+                      {[c.city, c.state].filter(Boolean).join(', ')}
+                    </span>
+                  )}
                   <span className="flex items-center gap-1 font-mono text-[11px] text-slate-400">
                     <Navigation className="w-3 h-3 text-emerald-400" />
-                    {c.lat.toFixed(4)}, {c.lng.toFixed(4)}
+                    {typeof c.lat === "number" &&
+                    Number.isFinite(c.lat) &&
+                    typeof c.lng === "number" &&
+                    Number.isFinite(c.lng)
+  ? `${c.lat.toFixed(6)}, ${c.lng.toFixed(6)}`
+  : "GPS unavailable"}
                   </span>
                 </div>
               </div>

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import {
@@ -28,13 +29,13 @@ import indianSignalImg from '../../assets/images/indian_traffic_signal_179073979
 import indianDividerImg from '../../assets/images/indian_road_divider_1790740026519.jpg';
 import indianOpenDrainImg from '../../assets/images/indian_open_drain_1790740040367.jpg';
 import { Incident } from '../../types/infrastructure';
+import type { BrowserLocation } from '../../hooks/useBrowserLocation';
 import {
   INDIAN_STATES,
   ALL_INDIAN_CITIES,
   CityInfo,
   getCitiesByState,
   getCityByName,
-  findClosestIndianCity,
   DEFAULT_INDIAN_CITY
 } from '../../data/indianLocations';
 
@@ -43,13 +44,41 @@ interface ReportHazardViewProps {
   onSubmitComplaint: (newIncident: Incident) => void;
   initialCity?: string;
   initialState?: string;
+  userLocation: BrowserLocation | null;
+  gpsStatus: string;
+  refreshLocation: () => Promise<BrowserLocation>;
 }
+
+interface LiveDetection {
+  class: string;
+  confidence: number;
+  bbox: [number, number, number, number];
+}
+
+const isLiveDetection = (value: unknown): value is LiveDetection => {
+  if (typeof value !== 'object' || value === null) return false;
+
+  const detection = value as Record<string, unknown>;
+  return (
+    typeof detection.class === 'string' &&
+    typeof detection.confidence === 'number' &&
+    Number.isFinite(detection.confidence) &&
+    Array.isArray(detection.bbox) &&
+    detection.bbox.length === 4 &&
+    detection.bbox.every(
+      (coordinate) => typeof coordinate === 'number' && Number.isFinite(coordinate)
+    )
+  );
+};
 
 export const ReportHazardView: React.FC<ReportHazardViewProps> = ({
   onCancel,
   onSubmitComplaint,
   initialCity = 'Bengaluru',
   initialState = 'Karnataka',
+  userLocation,
+  gpsStatus: browserGpsStatus,
+  refreshLocation,
 }) => {
   const startingCityInfo = getCityByName(initialCity) || DEFAULT_INDIAN_CITY;
 
@@ -66,6 +95,7 @@ export const ReportHazardView: React.FC<ReportHazardViewProps> = ({
   });
   const [latitude, setLatitude] = useState<number | null>(null);
   const [longitude, setLongitude] = useState<number | null>(null);
+  const [locationSource, setLocationSource] = useState<'GPS' | 'Pinned' | null>(null);
 
   // 2. Hazard & AI Detection state
   const [selectedPhoto, setSelectedPhoto] = useState<string>(indianPotholeImg);
@@ -86,53 +116,86 @@ export const ReportHazardView: React.FC<ReportHazardViewProps> = ({
   // GPS + Camera States
   const [cameraOpen, setCameraOpen] = useState(false);
   const [stream, setStream] = useState<MediaStream | null>(null);
-  const [gpsStatus, setGpsStatus] = useState("Waiting for GPS...");
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const [gpsStatus, setGpsStatus] = useState(browserGpsStatus);
+  const [uploadedIncidentId, setUploadedIncidentId] = useState<string | null>(null);
+  const overlayRef = useRef<HTMLCanvasElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [liveDetections, setLiveDetections] = useState<LiveDetection[]>([]);
+  const setPreciseLocation = (
+    lat: number,
+    lng: number,
+    source: 'GPS' | 'Pinned',
+    location?: BrowserLocation
+  ) => {
+    setLatitude(lat);
+    setLongitude(lng);
+    setCoords({ lat, lng });
+    setLocationSource(source);
 
-  const getCurrentLocation = () => {
-    return new Promise<{ lat: number; lng: number }>((resolve, reject) => {
-      if (!navigator.geolocation) {
-        reject("Geolocation not supported");
-        return;
-      }
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          resolve({
-            lat: position.coords.latitude,
-            lng: position.coords.longitude,
-          });
-        },
-        reject,
-        { enableHighAccuracy: true, timeout: 10000 }
-      );
-    });
-  };
-
-  
-  
-  const startCamera = async () => {
-    handleAutoDetectLocation();
-    try {
-      const mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: "environment",
-        },
-      });
-
-      setStream(mediaStream);
-      setCameraOpen(true);
-
-      setTimeout(() => {
-        if (videoRef.current) {
-          videoRef.current.srcObject = mediaStream;
-          videoRef.current.play();
-        }
-      }, 100);
-    } catch (err) {
-      console.error("Camera access denied:", err);
+    if (location) {
+      setSelectedState(location.state);
+      setSelectedCityName(location.city);
+      setSelectedArea(location.area);
+      setStreetAddress(location.address);
+      console.log('GPS UPDATED:', lat, lng);
+    } else {
+      setSelectedState('');
+      setSelectedCityName('');
+      setSelectedArea('');
+      setStreetAddress(`${source}: ${lat.toFixed(6)}, ${lng.toFixed(6)}`);
     }
+    setGpsStatus(source === 'GPS' ? 'GPS available' : 'Location pinned');
   };
+
+  useEffect(() => {
+    setGpsStatus(browserGpsStatus);
+    if (!userLocation) {
+      if (locationSource === 'GPS') {
+        setLatitude(null);
+        setLongitude(null);
+        setLocationSource(null);
+        setCoords({ lat: startingCityInfo.lat, lng: startingCityInfo.lng });
+      }
+      return;
+    }
+    setPreciseLocation(
+      userLocation.lat,
+      userLocation.lng,
+      'GPS',
+      userLocation
+    );
+  }, [userLocation, browserGpsStatus, locationSource, startingCityInfo]);
+
+  const videoRef = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+  if (cameraOpen && videoRef.current && stream) {
+    videoRef.current.srcObject = stream;
+  }
+}, [cameraOpen, stream]);
+
+  const startCamera = async () => {
+    setGpsStatus('Detecting GPS...');
+    try {
+      const location = await refreshLocation();
+      setPreciseLocation(location.lat, location.lng, 'GPS', location);
+    } catch (error) {
+      console.warn('Unable to refresh GPS before opening camera:', error);
+      setGpsStatus(browserGpsStatus);
+    }
+
+  try {
+    const mediaStream = await navigator.mediaDevices.getUserMedia({
+      video: true,
+      audio: false,
+    });
+
+    setStream(mediaStream);
+    setCameraOpen(true);
+
+  } catch (err) {
+    console.error("Camera Error:", err);
+  }
+};
   const stopCamera = () => {
     if (stream) stream.getTracks().forEach((t) => t.stop());
     setCameraOpen(false);
@@ -172,6 +235,130 @@ export const ReportHazardView: React.FC<ReportHazardViewProps> = ({
     0.95
   );
 };
+const drawDetections = (detections: LiveDetection[]) => {
+  const canvas = overlayRef.current;
+  const video = videoRef.current;
+
+  if (!canvas || !video || video.videoWidth === 0 || video.videoHeight === 0) return;
+
+  const bounds = canvas.getBoundingClientRect();
+  if (bounds.width === 0 || bounds.height === 0) return;
+
+  const pixelRatio = window.devicePixelRatio || 1;
+  const pixelWidth = Math.round(bounds.width * pixelRatio);
+  const pixelHeight = Math.round(bounds.height * pixelRatio);
+  if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+    canvas.width = pixelWidth;
+    canvas.height = pixelHeight;
+  }
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+
+  ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+  ctx.clearRect(0, 0, bounds.width, bounds.height);
+  const scale = Math.max(
+    bounds.width / video.videoWidth,
+    bounds.height / video.videoHeight
+  );
+  const offsetX = (bounds.width - video.videoWidth * scale) / 2;
+  const offsetY = (bounds.height - video.videoHeight * scale) / 2;
+
+  detections.forEach((det) => {
+    const [x1, y1, x2, y2] = det.bbox;
+    const left = x1 * scale + offsetX;
+    const top = y1 * scale + offsetY;
+    const width = (x2 - x1) * scale;
+    const height = (y2 - y1) * scale;
+    const label = `${det.class} ${(det.confidence * 100).toFixed(1)}%`;
+
+    ctx.strokeStyle = "#00FF00";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(left, top, width, height);
+    ctx.fillStyle = "#00FF00";
+    ctx.font = "16px Arial";
+    const labelY = Math.max(18, top - 6);
+    const labelWidth = ctx.measureText(label).width + 8;
+    ctx.fillRect(left, labelY - 17, labelWidth, 20);
+    ctx.fillStyle = "#000000";
+    ctx.fillText(label, left + 4, labelY - 2);
+  });
+};
+
+const sendFrame = async () => {
+  console.log("sendFrame running");
+  if (!videoRef.current || !canvasRef.current) return;
+
+  const video = videoRef.current;
+  const canvas = canvasRef.current;
+
+  if (video.videoWidth === 0) return;
+
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+
+  ctx.drawImage(video, 0, 0);
+
+  canvas.toBlob(
+    async (blob) => {
+      if (!blob) return;
+
+      try {
+        const formData = new FormData();
+
+        formData.append(
+          "file",
+          blob,
+          "frame.jpg"
+        );
+
+        const response = await fetch(
+          "http://127.0.0.1:8000/live-detect",
+          {
+            method: "POST",
+            body: formData,
+          }
+        );
+        if (!response.ok) {
+          throw new Error(`Live detection failed: HTTP ${response.status}`);
+        }
+
+        const data: { success?: boolean; detections?: unknown } = await response.json();
+        if (data.success !== true || !Array.isArray(data.detections)) {
+          throw new Error("Live detection response did not contain a detections array");
+        }
+
+        const detections = data.detections.filter(isLiveDetection);
+        setLiveDetections(detections);
+        drawDetections(detections);
+
+      } catch (err) {
+        console.error(
+          "Live Detect Error:",
+          err
+        );
+      }
+    },
+    "image/jpeg",
+    0.8
+  );
+};
+useEffect(() => {
+  if (!cameraOpen) return;
+
+  console.log("Starting live detection");
+
+  const interval = setInterval(
+    sendFrame,
+    1000
+  );
+
+  return () => clearInterval(interval);
+
+}, [cameraOpen]);
 
   // File input ref
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -190,6 +377,8 @@ export const ReportHazardView: React.FC<ReportHazardViewProps> = ({
 
   // Update cities when state changes
   const handleStateChange = (newState: string) => {
+    if (userLocation) return;
+    setLocationSource(null);
     setSelectedState(newState);
     const citiesInState = getCitiesByState(newState);
     if (citiesInState.length > 0) {
@@ -203,6 +392,8 @@ export const ReportHazardView: React.FC<ReportHazardViewProps> = ({
 
   // Update areas when city changes
   const handleCityChange = (newCity: string) => {
+    if (userLocation) return;
+    setLocationSource(null);
     setSelectedCityName(newCity);
     const city = getCityByName(newCity);
     if (city) {
@@ -214,6 +405,8 @@ export const ReportHazardView: React.FC<ReportHazardViewProps> = ({
 
   // Update address when area changes
   const handleAreaChange = (newArea: string) => {
+    if (userLocation) return;
+    setLocationSource(null);
     setSelectedArea(newArea);
     setStreetAddress(`${newArea} Main Corridor`);
     const city = getCityByName(selectedCityName);
@@ -222,27 +415,6 @@ export const ReportHazardView: React.FC<ReportHazardViewProps> = ({
     }
   };
 
-  const setPreciseLocation = (lat: number, lng: number, source: 'GPS' | 'Pinned') => {
-    const city = findClosestIndianCity(lat, lng);
-    setCoords({ lat, lng });
-    setSelectedState(city.state);
-    setSelectedCityName(city.name);
-    setSelectedArea('GPS location');
-    setStreetAddress(`${source} coordinates (${lat.toFixed(5)}, ${lng.toFixed(5)})`);
-  };
-
-  const distanceFromCityCenterKm = (() => {
-    const toRadians = (degrees: number) => (degrees * Math.PI) / 180;
-    const latDelta = toRadians(currentCityInfo.lat - coords.lat);
-    const lngDelta = toRadians(currentCityInfo.lng - coords.lng);
-    const haversine =
-      Math.sin(latDelta / 2) ** 2 +
-      Math.cos(toRadians(coords.lat)) *
-        Math.cos(toRadians(currentCityInfo.lat)) *
-        Math.sin(lngDelta / 2) ** 2;
-    return 6371 * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
-  })();
-
   // Pick an example image
  
 
@@ -250,20 +422,52 @@ export const ReportHazardView: React.FC<ReportHazardViewProps> = ({
   const handleFileUpload = async (file: File) => {
   if (!file) return;
 
+  setUploadedIncidentId(null);
   try {
+    setGpsStatus('Detecting GPS...');
+    let uploadLocation: BrowserLocation | null = null;
+    const pinnedLocation =
+      locationSource === 'Pinned' && latitude !== null && longitude !== null
+        ? {
+            lat: latitude,
+            lng: longitude,
+            address: streetAddress,
+            city: selectedCityName,
+            state: selectedState,
+            area: selectedArea,
+          }
+        : null;
+    try {
+      uploadLocation = await refreshLocation();
+      setPreciseLocation(
+        uploadLocation.lat,
+        uploadLocation.lng,
+        'GPS',
+        uploadLocation
+      );
+    } catch (error) {
+      console.warn('Unable to refresh GPS for this upload:', error);
+      uploadLocation = pinnedLocation;
+      setGpsStatus(browserGpsStatus);
+    }
+
     // Show uploaded image immediately
     const objectUrl = URL.createObjectURL(file);
     setSelectedPhoto(objectUrl);
 
-    // Build form data
     const formData = new FormData();
     formData.append("file", file);
 
-    // Optional GPS coordinates
-    formData.append("latitude", coords.lat.toString());
-    formData.append("longitude", coords.lng.toString());
+    const uploadAddress = uploadLocation?.address || 'GPS unavailable';
+    formData.append('latitude', uploadLocation ? String(uploadLocation.lat) : '');
+    formData.append('longitude', uploadLocation ? String(uploadLocation.lng) : '');
+    formData.append('address', uploadAddress);
+    console.log('PAYLOAD SENT TO BACKEND:', {
+      latitude: uploadLocation?.lat ?? null,
+      longitude: uploadLocation?.lng ?? null,
+      address: uploadAddress,
+    });
 
-    // Call FastAPI backend
     const response = await fetch(
       "http://127.0.0.1:8000/upload-hazard",
       {
@@ -272,6 +476,7 @@ export const ReportHazardView: React.FC<ReportHazardViewProps> = ({
       }
     );
 
+    // rest of your existing code...
     if (!response.ok) {
       throw new Error(`HTTP Error: ${response.status}`);
     }
@@ -279,6 +484,9 @@ export const ReportHazardView: React.FC<ReportHazardViewProps> = ({
     const data = await response.json();
 
     console.log("Backend Response:", data);
+    if (typeof data.incident_id === 'string') {
+      setUploadedIncidentId(data.incident_id);
+    }
 
     // Use REAL YOLO results
     console.log("Upload Response:", data);
@@ -305,27 +513,14 @@ setRecommendedDept(data.department);
   };
 
   // Auto-Detect Location with Geolocation API
-  const handleAutoDetectLocation = () => {
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          const lat = pos.coords.latitude;
-          const lng = pos.coords.longitude;
-
-          setLatitude(lat);
-          setLongitude(lng);
-          setPreciseLocation(lat, lng, 'GPS');
-        },
-        () => {
-          const city = currentCityInfo;
-          const area = city.areas[0] || city.name;
-          setCoords({ lat: city.lat, lng: city.lng });
-          setSelectedState(city.state);
-          setSelectedCityName(city.name);
-          setSelectedArea(area);
-          setStreetAddress(`Main Road, ${area}`);
-        }
-      );
+  const handleAutoDetectLocation = async () => {
+    setGpsStatus('Detecting GPS...');
+    try {
+      const location = await refreshLocation();
+      setPreciseLocation(location.lat, location.lng, 'GPS', location);
+    } catch (error) {
+      setGpsStatus(browserGpsStatus);
+      console.warn('Unable to detect GPS location:', error);
     }
   };
 
@@ -400,19 +595,84 @@ setRecommendedDept(data.department);
     if (!miniMapInstanceRef.current || !miniMapMarkerRef.current) return;
     miniMapInstanceRef.current.setView([coords.lat, coords.lng], 13.5, { animate: true });
     miniMapMarkerRef.current.setLatLng([coords.lat, coords.lng]);
+    console.log('REPORT MAP CENTERED:', coords.lat, coords.lng);
+    console.log('REPORT MARKER MOVED:', coords.lat, coords.lng);
   }, [coords.lat, coords.lng]);
 
   // Submit Complaint Handler
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
     console.log("SUBMIT BUTTON CLICKED");
 
+    let submissionLocation = userLocation;
+    if (latitude !== null && longitude !== null && gpsStatus === 'Location pinned') {
+      submissionLocation = {
+        lat: latitude,
+        lng: longitude,
+        address: streetAddress,
+        city: selectedCityName,
+        state: selectedState,
+        area: selectedArea,
+      };
+    }
+    try {
+      submissionLocation = await refreshLocation();
+      setPreciseLocation(
+        submissionLocation.lat,
+        submissionLocation.lng,
+        'GPS',
+        submissionLocation
+      );
+    } catch (error) {
+      console.warn('Unable to refresh GPS while submitting complaint:', error);
+      if (gpsStatus !== 'Location pinned') submissionLocation = null;
+    }
+
     const ticketNumber = `ARIIP-2026-0${Math.floor(160 + Math.random() * 80)}`;
-    const fullAddress = `${streetAddress}, ${selectedArea}, ${selectedCityName}, ${selectedState} - India`;
+    const hasPreciseLocation = submissionLocation !== null;
+    const reportCity = submissionLocation?.city || selectedCityName;
+    const reportState = submissionLocation?.state || selectedState;
+    const fullAddress = submissionLocation?.address || 'GPS unavailable';
+
+    console.log('COMPLAINT LOCATION PAYLOAD:', {
+      latitude: submissionLocation?.lat ?? null,
+      longitude: submissionLocation?.lng ?? null,
+      address: fullAddress,
+    });
+
+    if (uploadedIncidentId) {
+      const locationForm = new FormData();
+      locationForm.append(
+        'latitude',
+        submissionLocation ? String(submissionLocation.lat) : ''
+      );
+      locationForm.append(
+        'longitude',
+        submissionLocation ? String(submissionLocation.lng) : ''
+      );
+      locationForm.append('address', fullAddress);
+
+      try {
+        const response = await fetch(
+          `http://127.0.0.1:8000/incidents/${uploadedIncidentId}/location`,
+          { method: 'PUT', body: locationForm }
+        );
+        if (!response.ok) {
+          throw new Error(`Location update failed: HTTP ${response.status}`);
+        }
+        const savedLocation = await response.json();
+        console.log('LOCATION PAYLOAD SAVED TO BACKEND:', savedLocation);
+      } catch (error) {
+        console.error('Unable to save complaint GPS to the backend:', error);
+        setGpsStatus('Unable to sync complaint location with backend');
+        setIsSubmitting(false);
+        return;
+      }
+    }
 
     const newIncident: Incident = {
-      id: `inc-${Date.now()}`,
+      id: uploadedIncidentId || `inc-${Date.now()}`,
       ticketNumber,
       title: detectedIssue,
       type: detectedIssue.toLowerCase().includes("pothole")
@@ -434,14 +694,16 @@ setRecommendedDept(data.department);
           : "Road Works",
       location: {
         address: fullAddress,
-        street: streetAddress,
-        district: selectedArea,
-        city: selectedCityName,
-        state: selectedState,
+        street: hasPreciseLocation ? fullAddress : 'GPS unavailable',
+        district: submissionLocation?.area || '',
+        city: hasPreciseLocation ? reportCity : '',
+        state: hasPreciseLocation ? reportState : '',
         country: "India",
-        lat: coords.lat,
-        lng: coords.lng,
+        lat: submissionLocation?.lat ?? null,
+        lng: submissionLocation?.lng ?? null,
       },
+      latitude: submissionLocation?.lat ?? null,
+      longitude: submissionLocation?.lng ?? null,
       dateReported: new Date().toISOString(),
       reportedTimeAgo: "Just now",
       reportedBy: {
@@ -449,7 +711,9 @@ setRecommendedDept(data.department);
         identifier: `Citizen Mobile (${contactNumber})`,
         timestamp: "Just now",
       },
-      description: description || `Reported ${detectedIssue} on ${streetAddress} in ${selectedCityName}. Immediate municipal action requested.`,
+      description: description || (hasPreciseLocation
+        ? `Reported ${detectedIssue} at ${fullAddress}. Immediate municipal action requested.`
+        : `Reported ${detectedIssue}; GPS location unavailable.`),
       imageUrl: selectedPhoto,
       galleryImages: [selectedPhoto],
       imageMetadata: {
@@ -480,7 +744,7 @@ setRecommendedDept(data.department);
           id: `t-${Date.now() + 1}`,
           stage: "assigned",
           label: "Assigned to Ward Crew",
-          timestamp: `Auto-routing to ${selectedCityName} Municipal Desk`,
+          timestamp: `Auto-routing to ${reportCity} Municipal Desk`,
           actor: "Municipal Dispatch",
           completed: false,
         },
@@ -489,10 +753,9 @@ setRecommendedDept(data.department);
       accidentRiskPercentage: estimatedSeverity === "Critical" ? 92 : 82,
     };
 
-    setTimeout(() => {
-      console.log("Submitting incident:", newIncident);
-      onSubmitComplaint(newIncident);
-    }, 800);
+    console.log("Submitting incident:", newIncident);
+    onSubmitComplaint(newIncident);
+    setIsSubmitting(false);
   };
 
   return (
@@ -591,6 +854,7 @@ setRecommendedDept(data.department);
               >
                 Capture Live Hazard
               </button>
+
             </div>
 
             <div className="sm:col-span-5 space-y-3">
@@ -652,8 +916,13 @@ setRecommendedDept(data.department);
                   <select
                     value={selectedState}
                     onChange={(e) => handleStateChange(e.target.value)}
+                    disabled={Boolean(userLocation)}
                     className="w-full bg-[#0f1728] text-white border border-[#243044] rounded-xl px-3 py-2.5 pr-8 appearance-none focus:outline-none focus:border-[#3b82f6] cursor-pointer"
                   >
+                    {userLocation && <option value="">GPS coordinates only</option>}
+                    {!INDIAN_STATES.some((state) => state.name === selectedState) && (
+                      <option value={selectedState}>{selectedState}</option>
+                    )}
                     {INDIAN_STATES.map((s) => (
                       <option key={s.code} value={s.name}>
                         {s.name}
@@ -672,8 +941,13 @@ setRecommendedDept(data.department);
                   <select
                     value={selectedCityName}
                     onChange={(e) => handleCityChange(e.target.value)}
+                    disabled={Boolean(userLocation)}
                     className="w-full bg-[#0f1728] text-white border border-[#243044] rounded-xl px-3 py-2.5 pr-8 appearance-none focus:outline-none focus:border-[#3b82f6] cursor-pointer"
                   >
+                    {userLocation && <option value="">GPS coordinates only</option>}
+                    {!availableCities.some((city) => city.name === selectedCityName) && (
+                      <option value={selectedCityName}>{selectedCityName}</option>
+                    )}
                     {availableCities.map((c) => (
                       <option key={c.name} value={c.name}>
                         {c.name}
@@ -690,9 +964,13 @@ setRecommendedDept(data.department);
               <select
                 value={selectedArea}
                 onChange={(e) => handleAreaChange(e.target.value)}
+                disabled={Boolean(userLocation)}
                 className="w-full bg-[#0f1728] text-slate-200 border border-[#243044] rounded-xl pl-10 pr-8 py-2.5 appearance-none focus:outline-none focus:border-[#3b82f6] cursor-pointer"
               >
-                {selectedArea === "GPS location" && <option value="GPS location">GPS location</option>}
+                {userLocation && <option value="">GPS coordinates only</option>}
+                {!currentCityInfo.areas.includes(selectedArea) && (
+                  <option value={selectedArea}>{selectedArea}</option>
+                )}
                 {currentCityInfo.areas.map((a) => (
                   <option key={a} value={a}>
                     {a}, {selectedCityName}
@@ -712,13 +990,8 @@ setRecommendedDept(data.department);
               <div className="absolute top-3 right-3 bg-[#111928]/95 backdrop-blur-md border border-[#243044] rounded-xl p-3 max-w-[210px] shadow-2xl z-[500]">
                 <span className="text-[10px] text-slate-400 font-semibold block leading-tight">Selected Location</span>
                 <p className="text-xs font-medium text-white leading-snug mt-1 break-words">
-                  {selectedArea === "GPS location" ? (
-                    <>
-                      {streetAddress}
-                      <span className="block text-[10px] text-slate-400 mt-1">
-                        Nearest listed city: {selectedCityName} ({distanceFromCityCenterKm.toFixed(1)} km from center)
-                      </span>
-                    </>
+                  {userLocation || locationSource === 'Pinned' ? (
+                    streetAddress
                   ) : (
                     `${streetAddress}, ${selectedCityName} - India`
                   )}
@@ -742,6 +1015,11 @@ setRecommendedDept(data.department);
                 <Crosshair className="w-4 h-4 text-blue-400" />
               </button>
             </div>
+            <p className="text-[11px] text-slate-400 font-mono" aria-live="polite">
+              {latitude !== null && longitude !== null
+                ? `GPS: ${latitude.toFixed(6)}, ${longitude.toFixed(6)}${selectedCityName && selectedState ? ` · Nearest listed city/state: ${selectedCityName}, ${selectedState}` : ''}`
+                : gpsStatus}
+            </p>
           </div>
 
           <div className="space-y-3 pt-2">
@@ -865,14 +1143,26 @@ setRecommendedDept(data.department);
         <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center">
           <div className="bg-[#111928] p-4 rounded-2xl w-[90%] max-w-xl">
             <h2 className="text-white text-xl font-bold mb-4">Capture Hazard</h2>
-            <video
-              ref={videoRef}
-              autoPlay
-              playsInline
-              muted
-              className="w-full h-[400px] object-cover rounded-xl bg-black"
-            />
+            <div className="relative">
+  <video
+    ref={videoRef}
+    autoPlay
+    playsInline
+    muted
+    className="w-full h-[400px] object-cover rounded-xl bg-black"
+  />
+
+  <canvas
+    ref={overlayRef}
+    className="absolute top-0 left-0 w-full h-full pointer-events-none"
+  />
+</div>
             <canvas ref={canvasRef} className="hidden" />
+            <div className="text-cyan-400 text-xs font-mono mt-3" aria-live="polite">
+                {latitude !== null && longitude !== null
+                  ? `GPS: ${latitude.toFixed(6)}, ${longitude.toFixed(6)}${selectedCityName && selectedState ? ` · Nearest listed city/state: ${selectedCityName}, ${selectedState}` : ''}`
+                  : gpsStatus}
+            </div>
             <div className="flex gap-3 mt-4">
               <button
                 type="button"
@@ -891,6 +1181,8 @@ setRecommendedDept(data.department);
             </div>
           </div>
         </div>
+
+
       )}
     </div>
   );

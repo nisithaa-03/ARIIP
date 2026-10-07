@@ -31,7 +31,7 @@ export const VerificationQueueView: React.FC<VerificationQueueViewProps> = ({
   const [search, setSearch] = useState('');
   const [verifiedModalItem, setVerifiedModalItem] = useState<any | null>(null);
   const [items, setItems] = useState<any[]>([]);
-
+  console.log("Items from API:", items);
 useEffect(() => {
   fetch("http://127.0.0.1:8000/incidents")
     .then((res) => res.json())
@@ -176,8 +176,13 @@ console.log("Displayed:", displayed.length);
 </p>
                 <p className="text-[11px] font-mono text-emerald-400 flex items-center gap-1 mt-0.5">
                   <Navigation className="w-3 h-3" />
-                  GPS: {item.latitude?.toFixed(4)}° N,
-{item.longitude?.toFixed(4)}° E
+                  GPS:{' '}
+                  {typeof item.latitude === 'number' &&
+                  Number.isFinite(item.latitude) &&
+                  typeof item.longitude === 'number' &&
+                  Number.isFinite(item.longitude)
+                    ? `${item.latitude.toFixed(6)}, ${item.longitude.toFixed(6)}`
+                    : 'GPS unavailable'}
                 </p>
               </div>
 
