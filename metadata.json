@@ -1,0 +1,7 @@
+{
+  "name": "ARIIP - Autonomous Road Infrastructure Intelligence Platform",
+  "description": "Enterprise road infrastructure intelligence, hazard tracking, and municipal workflow platform for city engineers and highway authorities.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
