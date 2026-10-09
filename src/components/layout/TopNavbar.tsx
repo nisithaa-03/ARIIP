@@ -18,6 +18,9 @@ import { SystemNotification } from '../../types/infrastructure';
 import {
   INDIAN_STATES,
   ALL_INDIAN_CITIES,
+  CityInfo,
+  findClosestIndianCity,
+  getCitiesByState
 } from '../../data/indianLocations';
 
 interface TopNavbarProps {
@@ -30,7 +33,6 @@ interface TopNavbarProps {
   selectedCity: string;
   selectedState: string;
   onCityChange: (cityName: string, stateName: string) => void;
-  onRequestLocation: () => Promise<void>;
   isAllIndia: boolean;
   onToggleAllIndia: () => void;
 }
@@ -45,7 +47,6 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
   selectedCity,
   selectedState,
   onCityChange,
-  onRequestLocation,
   isAllIndia,
   onToggleAllIndia,
 }) => {
@@ -56,9 +57,21 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
 
   const unreadCount = notifications.filter((n) => !n.read).length;
 
-  const handleAutoDetect = async () => {
-    await onRequestLocation();
-    setShowLocationPicker(false);
+  const handleAutoDetect = () => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const nearest = findClosestIndianCity(pos.coords.latitude, pos.coords.longitude);
+          onCityChange(nearest.name, nearest.state);
+          setShowLocationPicker(false);
+        },
+        () => {
+          // If denied, fallback to Bengaluru
+          onCityChange('Bengaluru', 'Karnataka');
+          setShowLocationPicker(false);
+        }
+      );
+    }
   };
 
   const filteredCities = ALL_INDIAN_CITIES.filter((c) => {

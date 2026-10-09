@@ -10,7 +10,6 @@ import {
   ArrowRight
 } from 'lucide-react';
 import saferRoadsBanner from '../../assets/images/sidebar_safer_roads_1790737473231.jpg';
-import avatarImg from '../../assets/images/avatar_nisithaa_1790737494378.jpg';
 
 export type NavTab = 'map' | 'report' | 'complaints' | 'departments' | 'verification' | 'settings' | 'complaint-detail';
 
@@ -183,15 +182,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* User profile row */}
         <div className="flex items-center justify-between pt-1">
           <div className="flex items-center gap-2.5">
-            <img
-              src={avatarImg}
-              alt="Nisithaa S"
-              referrerPolicy="no-referrer"
-              className="w-8 h-8 rounded-full object-cover border border-blue-500/40 ring-1 ring-blue-500/20"
-            />
             <div>
-              <p className="text-xs font-semibold text-white leading-tight">Nisithaa S</p>
-              <p className="text-[11px] text-[#94A3B8] leading-tight mt-0.5">Citizen Inspector</p>
+              <p className="text-xs font-semibold text-white leading-tight">nisithaa r</p>
+              <p className="text-[11px] text-[#94A3B8] leading-tight mt-0.5"> </p>
             </div>
           </div>
 

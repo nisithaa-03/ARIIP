@@ -12,7 +12,6 @@ import {
   Sliders,
   Layers
 } from 'lucide-react';
-import avatarImg from '../../assets/images/avatar_nisithaa_1790737494378.jpg';
 
 export const SettingsView: React.FC = () => {
   const [activeSubTab, setActiveSubTab] = useState<'profile' | 'notifications' | 'map' | 'privacy' | 'help'>('profile');
@@ -20,9 +19,9 @@ export const SettingsView: React.FC = () => {
   const [saveSuccess, setSaveSuccess] = useState(false);
 
   // Form State
-  const [fullName, setFullName] = useState('Nisithaa S');
+  const [fullName, setFullName] = useState('nisithaa r');
   const [email, setEmail] = useState('nisithaa@ariip.gov.in');
-  const [role, setRole] = useState('Citizen Road Inspector & Field Auditor');
+  const [role, setRole] = useState('');
   const [department, setDepartment] = useState('Municipal Road Safety Command');
   const [phone, setPhone] = useState('+91 98765 43210');
 
@@ -91,17 +90,10 @@ export const SettingsView: React.FC = () => {
           {activeSubTab === 'profile' && (
             <div className="space-y-6">
               <div className="flex flex-wrap items-center justify-between gap-4 pb-5 border-b border-[#2A364A]">
-                <div className="flex items-center gap-4">
-                  <img
-                    src={avatarImg}
-                    alt="Nisithaa S"
-                    className="w-16 h-16 rounded-full object-cover border-2 border-blue-500/50 shadow-md ring-2 ring-blue-500/20"
-                  />
-                  <div>
-                    <h2 className="text-base font-bold text-white">{fullName}</h2>
-                    <p className="text-xs text-blue-400 font-medium">{role}</p>
-                    <p className="text-[11px] text-[#94A3B8] mt-0.5">{department}</p>
-                  </div>
+                <div>
+                  <h2 className="text-base font-bold text-white">{fullName}</h2>
+                  {role && <p className="text-xs text-blue-400 font-medium">{role}</p>}
+                  <p className="text-[11px] text-[#94A3B8] mt-0.5">{department}</p>
                 </div>
 
                 <button

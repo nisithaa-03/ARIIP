@@ -21,7 +21,6 @@ import {
 } from 'lucide-react';
 import { Incident } from '../../types/infrastructure';
 import { CityInfo, DEFAULT_INDIAN_CITY } from '../../data/indianLocations';
-import type { BrowserLocation } from '../../hooks/useBrowserLocation';
 
 interface OsmMapProps {
   incidents: Incident[];
@@ -34,8 +33,6 @@ interface OsmMapProps {
   inProgressCount?: number;
   resolvedCount?: number;
   currentCityInfo?: CityInfo;
-  userLocation?: BrowserLocation | null;
-  gpsStatus?: string;
   isAllIndia?: boolean;
 }
 
@@ -52,19 +49,16 @@ export const OsmMap: React.FC<OsmMapProps> = ({
   inProgressCount = 12,
   resolvedCount = 18,
   currentCityInfo = DEFAULT_INDIAN_CITY,
-  userLocation = null,
-  gpsStatus = 'Waiting for GPS...',
   isAllIndia = false,
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const markersLayerRef = useRef<L.LayerGroup | null>(null);
-  const userMarkerRef = useRef<L.Marker | null>(null);
   const [mapStyle, setMapStyle] = useState<MapStyleType>('dark-blue');
   const tileLayerRef = useRef<L.TileLayer | null>(null);
   const [mapReady, setMapReady] = useState(false);
 
-  // Use browser GPS when available; the selected city is only the no-GPS fallback.
+  // Initialize Map centered on Bengaluru Urban Corridor
   useEffect(() => {
     if (!mapContainerRef.current) return;
 
@@ -76,10 +70,8 @@ export const OsmMap: React.FC<OsmMapProps> = ({
     // Center map on currently selected city or all-India
     const initialCenter: [number, number] = isAllIndia
       ? [22.5, 79.5]
-      : userLocation
-        ? [userLocation.lat, userLocation.lng]
-        : [currentCityInfo.lat, currentCityInfo.lng];
-    const initialZoom = isAllIndia ? 5 : (userLocation ? 14 : currentCityInfo.zoom || 12.8);
+      : [currentCityInfo.lat, currentCityInfo.lng];
+    const initialZoom = isAllIndia ? 5 : (currentCityInfo.zoom || 12.8);
 
     const map = L.map(mapContainerRef.current, {
       center: initialCenter,
@@ -132,7 +124,6 @@ export const OsmMap: React.FC<OsmMapProps> = ({
       resizeObserver.disconnect();
       map.remove();
       mapInstanceRef.current = null;
-      userMarkerRef.current = null;
     };
   }, []);
 
@@ -176,35 +167,29 @@ export const OsmMap: React.FC<OsmMapProps> = ({
     tileLayerRef.current = newTiles;
   }, [mapStyle]);
 
-  // Keep GPS authoritative over city changes; use city center only without a GPS fix.
+  // Handle City or Nationwide Switch with smooth flyTo
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map) return;
 
     if (isAllIndia) {
       map.flyTo([22.5, 79.5], 5.0, { duration: 1.2 });
-    } else if (userLocation) {
-      map.flyTo([userLocation.lat, userLocation.lng], 14, { duration: 1.0 });
-      console.log('MAP CENTERED:', userLocation.lat, userLocation.lng);
     } else if (currentCityInfo) {
       map.flyTo([currentCityInfo.lat, currentCityInfo.lng], currentCityInfo.zoom || 12.8, {
         duration: 1.0,
       });
     }
-  }, [currentCityInfo?.name, isAllIndia, userLocation?.lat, userLocation?.lng]);
+  }, [currentCityInfo?.name, isAllIndia]);
 
+  // Update Markers matching the screenshot pins
   useEffect(() => {
     const map = mapInstanceRef.current;
-    if (!map || !mapReady) return;
+    const markersGroup = markersLayerRef.current;
+    if (!map || !markersGroup) return;
 
-    if (!userLocation) {
-      if (userMarkerRef.current) {
-        userMarkerRef.current.remove();
-        userMarkerRef.current = null;
-      }
-      return;
-    }
+    markersGroup.clearLayers();
 
+    // 1. Render Current User Location Radar at City Center
     const blueRadarHtml = `
       <div class="relative flex items-center justify-center" style="width: 70px; height: 70px;">
         <div class="absolute w-16 h-16 rounded-full bg-blue-500/20 radar-ring"></div>
@@ -220,25 +205,10 @@ export const OsmMap: React.FC<OsmMapProps> = ({
       iconSize: [70, 70],
       iconAnchor: [35, 35],
     });
-
-    if (userMarkerRef.current) {
-      userMarkerRef.current.setLatLng([userLocation.lat, userLocation.lng]);
-    } else {
-      userMarkerRef.current = L.marker([userLocation.lat, userLocation.lng], {
-        icon: radarIcon,
-        interactive: false,
-      }).addTo(map);
-    }
-    console.log('GPS MARKER MOVED:', userLocation.lat, userLocation.lng);
-  }, [mapReady, userLocation?.lat, userLocation?.lng]);
-
-  // Update Markers matching the screenshot pins
-  useEffect(() => {
-    const map = mapInstanceRef.current;
-    const markersGroup = markersLayerRef.current;
-    if (!map || !markersGroup) return;
-
-    markersGroup.clearLayers();
+    L.marker([currentCityInfo.lat, currentCityInfo.lng], {
+      icon: radarIcon,
+      interactive: false,
+    }).addTo(markersGroup);
 
     // 2. Filter incidents based on category pill
     const filtered = incidents.filter((inc) => {
@@ -253,15 +223,6 @@ export const OsmMap: React.FC<OsmMapProps> = ({
 
     // 3. Render Drop Pins with realistic hazard indicators
     filtered.forEach((incident) => {
-      if (
-        typeof incident.location.lat !== 'number' ||
-        !Number.isFinite(incident.location.lat) ||
-        typeof incident.location.lng !== 'number' ||
-        !Number.isFinite(incident.location.lng)
-      ) {
-        return;
-      }
-
       const isSelected = selectedIncident?.id === incident.id;
 
       // Color scheme for pins
@@ -358,21 +319,13 @@ export const OsmMap: React.FC<OsmMapProps> = ({
 
   // Smooth pan to selected incident
   useEffect(() => {
-    if (
-      userLocation ||
-      !selectedIncident ||
-      !mapInstanceRef.current ||
-      typeof selectedIncident.location.lat !== 'number' ||
-      typeof selectedIncident.location.lng !== 'number' ||
-      !Number.isFinite(selectedIncident.location.lat) ||
-      !Number.isFinite(selectedIncident.location.lng)
-    ) return;
+    if (!selectedIncident || !mapInstanceRef.current) return;
     mapInstanceRef.current.flyTo(
       [selectedIncident.location.lat, selectedIncident.location.lng],
       13.8,
       { duration: 0.8 }
     );
-  }, [selectedIncident?.id, userLocation?.lat, userLocation?.lng]);
+  }, [selectedIncident?.id]);
 
   const handleZoomIn = () => {
     mapInstanceRef.current?.zoomIn();
@@ -383,16 +336,11 @@ export const OsmMap: React.FC<OsmMapProps> = ({
   };
 
   const handleLocateMe = () => {
-    if (userLocation) {
-      mapInstanceRef.current?.flyTo([userLocation.lat, userLocation.lng], 14, { duration: 0.8 });
-      console.log('MAP CENTERED:', userLocation.lat, userLocation.lng);
-    } else {
-      mapInstanceRef.current?.flyTo(
-        [currentCityInfo.lat, currentCityInfo.lng],
-        currentCityInfo.zoom || 13.0,
-        { duration: 0.8 }
-      );
-    }
+    mapInstanceRef.current?.flyTo(
+      [currentCityInfo.lat, currentCityInfo.lng],
+      currentCityInfo.zoom || 13.0,
+      { duration: 0.8 }
+    );
   };
 
   const categories = [
@@ -407,14 +355,6 @@ export const OsmMap: React.FC<OsmMapProps> = ({
 
   return (
     <div className="relative w-full h-full min-h-[400px] bg-[#0B1220] overflow-hidden select-none">
-      {!userLocation && (
-        <div
-          className="absolute top-5 left-1/2 -translate-x-1/2 z-20 rounded-lg border border-amber-500/40 bg-amber-950/90 px-3 py-2 text-xs text-amber-200 shadow-lg"
-          role="status"
-        >
-          {gpsStatus.startsWith('GPS unavailable') ? gpsStatus : 'Waiting for browser GPS; showing selected city.'}
-        </div>
-      )}
       {/* Absolute Leaflet Map Canvas */}
       <div
         ref={mapContainerRef}
@@ -469,7 +409,7 @@ export const OsmMap: React.FC<OsmMapProps> = ({
         <button
           onClick={handleLocateMe}
           className="w-9 h-9 rounded-xl bg-[#111827]/90 backdrop-blur-md border border-[#2A364A] flex items-center justify-center text-slate-300 hover:text-white hover:bg-[#1A2332] transition-colors shadow-xl"
-          title={userLocation ? 'Center on current GPS location' : 'Center on selected city'}
+          title="Center on Bengaluru Road Network"
         >
           <Crosshair className="w-4 h-4 text-blue-400" />
         </button>

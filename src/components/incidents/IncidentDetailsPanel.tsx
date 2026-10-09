@@ -342,30 +342,20 @@ export const IncidentDetailsPanel: React.FC<IncidentDetailsPanelProps> = ({
                 <div>
                   <span className="text-[#94A3B8] text-[10px] block uppercase tracking-wider">Coordinates</span>
                   <span className="font-mono text-[#E5E7EB] text-xs">
-                    {typeof incident.location.lat === 'number' &&
-                    Number.isFinite(incident.location.lat) &&
-                    typeof incident.location.lng === 'number' &&
-                    Number.isFinite(incident.location.lng)
-                      ? `${incident.location.lat.toFixed(6)}, ${incident.location.lng.toFixed(6)}`
-                      : 'GPS unavailable'}
+                    {incident.location.lat.toFixed(4)}, {incident.location.lng.toFixed(4)}
                   </span>
                 </div>
               </div>
 
-              {typeof incident.location.lat === 'number' &&
-                Number.isFinite(incident.location.lat) &&
-                typeof incident.location.lng === 'number' &&
-                Number.isFinite(incident.location.lng) && (
-                  <a
-                    href={`https://www.google.com/maps?q=${incident.location.lat},${incident.location.lng}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 font-medium transition-colors"
-                  >
-                    <span>Google Map</span>
-                    <ExternalLink className="w-3.5 h-3.5" />
-                  </a>
-                )}
+              <a
+                href={`https://www.google.com/maps?q=${incident.location.lat},${incident.location.lng}`}
+                target="_blank"
+                rel="noreferrer"
+                className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 font-medium transition-colors"
+              >
+                <span>Google Map</span>
+                <ExternalLink className="w-3.5 h-3.5" />
+              </a>
             </div>
 
             {/* Primary Action Button: Track This Complaint -> */}

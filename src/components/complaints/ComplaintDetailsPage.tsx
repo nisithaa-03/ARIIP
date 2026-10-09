@@ -52,25 +52,17 @@ const tertiaryImage =
   };
 
   const loc = selectedIncident?.location || {
-  address: "GPS unavailable",
-  street: "GPS unavailable",
-  district: "",
-  city: "",
-  state: "",
+  address: "Location unavailable",
+  street: "Unknown",
+  district: "Unknown",
+  city: "Unknown",
+  state: "Unknown",
   country: "India",
-  lat: null,
-  lng: null,
+  lat: 0,
+  lng: 0,
   lane: "Unknown",
 
 };
-  const coordinates =
-    typeof loc.lat === 'number' &&
-    Number.isFinite(loc.lat) &&
-    typeof loc.lng === 'number' &&
-    Number.isFinite(loc.lng)
-      ? { lat: loc.lat, lng: loc.lng }
-      : null;
-  const locationLabel = [loc.city, loc.state].filter(Boolean).join(', ') || 'GPS location';
   const workflowSteps = [
   {
     key: "created",
@@ -164,7 +156,7 @@ const currentIndex = timelineSteps.indexOf(currentStatus);
             </div>
             <div className="absolute bottom-3 left-3 px-2.5 py-1 rounded-md bg-black/70 backdrop-blur-sm text-[11px] text-blue-300 font-mono flex items-center gap-1.5">
               <Camera className="w-3.5 h-3.5 text-blue-400" />
-              Primary Inspection Angle • {loc.street}, {locationLabel}
+              Primary Inspection Angle • {loc.street}, {loc.city}
             </div>
           </div>
 
@@ -210,7 +202,7 @@ const currentIndex = timelineSteps.indexOf(currentStatus);
 </span>
                 <span className="px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 text-[10px] font-semibold flex items-center gap-1">
                   <Globe2 className="w-3 h-3" />
-                  {locationLabel}
+                  {loc.city}, {loc.state}
                 </span>
               </div>
               <h2 className="text-xl font-bold text-white tracking-tight">
@@ -235,9 +227,7 @@ const currentIndex = timelineSteps.indexOf(currentStatus);
               <p>{loc.address}</p>
               <p className="flex items-center gap-2 font-mono text-emerald-400 text-[11px] pt-1">
                 <Navigation className="w-3.5 h-3.5" />
-                {coordinates
-                  ? `Latitude: ${coordinates.lat.toFixed(6)}° N, Longitude: ${coordinates.lng.toFixed(6)}° E`
-                  : 'GPS unavailable'}
+                Latitude: {loc.lat.toFixed(5)}° N, Longitude: {loc.lng.toFixed(5)}° E ({loc.country})
               </p>
             </div>
             <div className="flex items-center gap-4 text-[#94A3B8] pt-2 border-t border-[#2A364A]">
@@ -427,12 +417,10 @@ const currentIndex = timelineSteps.indexOf(currentStatus);
             />
             <div className="p-4 bg-[#111827] border-t border-[#2A364A] flex items-center justify-between text-xs">
               <span className="text-white font-medium">
-                High-Resolution Street-Level Evidence Photo • {locationLabel}
+                High-Resolution Street-Level Evidence Photo • {loc.city}, {loc.state}
               </span>
               <span className="font-mono text-emerald-400">
-                {coordinates
-                  ? `${coordinates.lat.toFixed(6)}° N, ${coordinates.lng.toFixed(6)}° E`
-                  : 'GPS unavailable'}
+                {loc.lat.toFixed(5)}° N, {loc.lng.toFixed(5)}° E
               </span>
             </div>
           </div>

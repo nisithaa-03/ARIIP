@@ -56,13 +56,11 @@ export interface Incident {
     city: string;
     state: string;
     country: string;
-    lat: number | null;
-    lng: number | null;
+    lat: number;
+    lng: number;
     lane?: string;
     postalCode?: string;
   };
-  latitude?: number | null;
-  longitude?: number | null;
   dateReported: string;
   reportedTimeAgo?: string;
   reportedBy: {

@@ -3,6 +3,7 @@ import {
   initialNotifications
  
 } from './data/mockIncidents';
+import { syncPendingIncidents } from "./utils/offlineSync";
 import { Incident } from './types/infrastructure';
 import { TopNavbar } from './components/layout/TopNavbar';
 import { Sidebar, NavTab } from './components/layout/Sidebar';
@@ -15,69 +16,87 @@ import { DepartmentsView } from './components/departments/DepartmentsView';
 import { VerificationQueueView } from './components/verification/VerificationQueueView';
 import { SettingsView } from './components/settings/SettingsView';
 import { getCityByName, DEFAULT_INDIAN_CITY } from './data/indianLocations';
-import { useBrowserLocation } from './hooks/useBrowserLocation';
 
 
 export default function App() {
-  const { location: userLocation, gpsStatus, refreshLocation } = useBrowserLocation();
 
   const [incidents, setIncidents] =
   useState<Incident[]>([]);
+  const loadIncidents = async () => {
+    try {
+      const response = await fetch("http://127.0.0.1:8000/incidents");
+      if (!response.ok) {
+        throw new Error(`Failed to load incidents: HTTP ${response.status}`);
+      }
+      const data = await response.json();
+      console.log("INCIDENTS FROM API", data);
+
+      // Replace the full list so synced placeholders cannot remain or duplicate backend incidents.
+      setIncidents(
+        data.map((item: any) => ({
+          id: item.incident_id,
+          ticketNumber: item.incident_id.slice(0, 8),
+          title: item.hazard_type || item.issue || "Unknown Hazard",
+          description: item.hazard_type || item.issue || "Unknown Hazard",
+          severity: item.severity.toLowerCase(),
+          status: item.status,
+          department: item.department,
+          priorityScore: Math.round(
+            item.confidence <= 1
+              ? item.confidence * 100
+              : item.confidence
+          ),
+          imageUrl: `http://127.0.0.1:8000/${item.image_path.replace(/\\/g, "/")}`,
+          location: {
+            city: "Chennai",
+            state: "Tamil Nadu",
+            district: "Chennai",
+            address: `${item.latitude}, ${item.longitude}`,
+            lat: item.latitude,
+            lng: item.longitude,
+            latitude: item.latitude,
+            longitude: item.longitude,
+          },
+          reportedBy: {
+            identifier: "Citizen",
+          },
+          type: item.hazard_type,
+        }))
+      );
+    } catch (error) {
+      console.error("Fetch error:", error);
+    }
+  };
 
   useEffect(() => {
-    fetch("http://127.0.0.1:8000/incidents")
-      .then((res) => res.json())
-      .then((data) => {
-        setIncidents(
-  data.map((item: any) => ({
-    id: item.incident_id,
-    ticketNumber: item.incident_id.slice(0, 8),
+    void loadIncidents();
+  }, []);
 
-    title: item.hazard_type,
-    description: item.hazard_type,
+  useEffect(() => {
+    const syncNow = () => {
+      void syncPendingIncidents();
+    };
+    const handleIncidentSynced = (event: Event) => {
+      const { localIncidentId } = (
+        event as CustomEvent<{ localIncidentId: string }>
+      ).detail;
 
-    severity: item.severity.toLowerCase(),
-    status: item.status,
-    dateReported: item.created_at,
+      setIncidents((current) =>
+        current.filter((incident) => incident.id !== localIncidentId)
+      );
+      void loadIncidents();
+    };
 
-    department: item.department,
+    window.addEventListener("incident-synced", handleIncidentSynced);
+    window.addEventListener("incident-queued", syncNow);
+    window.addEventListener("online", syncNow);
+    syncNow();
 
-    priorityScore: Math.round(item.confidence),
-
-    imageUrl: `http://127.0.0.1:8000/${item.image_path.replace(/\\/g, "/")}`,
-    latitude: item.latitude,
-    longitude: item.longitude,
-    location: {
-  city: item.city || "",
-  state: item.state || "",
-  district: "",
-  address:
-    item.address ||
-    (item.latitude != null && item.longitude != null
-      ? `${item.latitude}, ${item.longitude}`
-      : "GPS unavailable"),
-  street:
-    item.address ||
-    (item.latitude != null && item.longitude != null
-      ? `${item.latitude}, ${item.longitude}`
-      : "GPS unavailable"),
-  country: "India",
-
-  lat: item.latitude ?? null,
-  lng: item.longitude ?? null,
-},
-
-    reportedBy: {
-      identifier: "Citizen",
-    },
-
-    type: item.hazard_type,
-  }))
-);
-      })
-      .catch((err) => {
-        console.error("Fetch error:", err);
-      });
+    return () => {
+      window.removeEventListener("incident-synced", handleIncidentSynced);
+      window.removeEventListener("incident-queued", syncNow);
+      window.removeEventListener("online", syncNow);
+    };
   }, []);
   // Default selected incident to ARIIP-2026-0143 Open Manhole
   const [selectedIncidentId, setSelectedIncidentId] = useState<string | null>('inc-0143');
@@ -95,12 +114,6 @@ export default function App() {
   const currentCityInfo = useMemo(() => {
     return getCityByName(selectedCity) || DEFAULT_INDIAN_CITY;
   }, [selectedCity]);
-
-  useEffect(() => {
-    if (!userLocation) return;
-    if (userLocation.city) setSelectedCity(userLocation.city);
-    if (userLocation.state) setSelectedState(userLocation.state);
-  }, [userLocation]);
 
   // Dynamically resolved incidents for the selected city or nationwide
    const cityIncidents = incidents;
@@ -149,17 +162,6 @@ export default function App() {
   setSelectedIncidentId(incidents[0].id);
 }
   };
-  const handleRequestLocation = async () => {
-    try {
-      const location = await refreshLocation();
-      if (location.city && location.state) {
-        setSelectedCity(location.city);
-        setSelectedState(location.state);
-      }
-    } catch (error) {
-      console.warn('Unable to refresh current browser location:', error);
-    }
-  };
   const handleToggleAllIndia = () => {
     setIsAllIndia((prev) => !prev);
   };
@@ -191,8 +193,8 @@ export default function App() {
   const handleNewIncident = (newInc: Incident) => {
   setIncidents((prev) => [newInc, ...prev]);
 
-  if (newInc.location.city) setSelectedCity(newInc.location.city);
-  if (newInc.location.state) setSelectedState(newInc.location.state);
+  setSelectedCity(newInc.location.city);
+  setSelectedState(newInc.location.state);
   setIsAllIndia(false);
   setSelectedIncidentId(newInc.id);
   setActiveTab('complaints');
@@ -226,7 +228,6 @@ export default function App() {
           selectedCity={selectedCity}
           selectedState={selectedState}
           onCityChange={handleCityChange}
-          onRequestLocation={handleRequestLocation}
           isAllIndia={isAllIndia}
           onToggleAllIndia={handleToggleAllIndia}
         />
@@ -248,8 +249,6 @@ export default function App() {
   inProgressCount={inProgressCount}
   resolvedCount={resolvedCount}
   currentCityInfo={currentCityInfo}
-  userLocation={userLocation}
-  gpsStatus={gpsStatus}
   isAllIndia={isAllIndia}
 />
     </div>
@@ -268,9 +267,6 @@ export default function App() {
             onSubmitComplaint={handleNewIncident}
             initialCity={selectedCity}
             initialState={selectedState}
-            userLocation={userLocation}
-            gpsStatus={gpsStatus}
-            refreshLocation={refreshLocation}
           />
         )}
 
