@@ -16,6 +16,25 @@ import {
 } from 'lucide-react';
 
 import { useEffect } from "react";
+
+const toApiImageUrl = (imagePath?: string | null) => {
+  if (!imagePath) return '';
+
+  const normalizedPath = imagePath.replace(/\\/g, '/');
+
+  if (/^https?:\/\//i.test(normalizedPath)) {
+    return normalizedPath;
+  }
+
+  const relativePath = normalizedPath.includes('/uploads/')
+    ? normalizedPath.split('/uploads/')[1]
+    : normalizedPath.startsWith('uploads/')
+      ? normalizedPath.replace(/^uploads\//, '')
+      : normalizedPath.replace(/^.*?(?:\/|\\)uploads(?:\/|\\)/, '');
+
+  return `http://127.0.0.1:8000/uploads/${relativePath.replace(/^\/+/, '')}`;
+};
+
 interface VerificationQueueViewProps {
   selectedCity?: string;
   selectedState?: string;
@@ -192,7 +211,7 @@ console.log("Displayed:", displayed.length);
                 className="relative rounded-xl overflow-hidden bg-[#0B1220] border border-[#2A364A] h-36 cursor-pointer group shadow-md"
               >
                 <img
-  src={`http://127.0.0.1:8000/${item.image_path.replace(/\\/g, "/")}`}
+  src={toApiImageUrl(item.image_path)}
 />
                 <div className="absolute top-2 left-2 px-2 py-0.5 rounded bg-black/80 text-[10px] font-bold text-red-400 border border-red-500/30">
                   Before (Hazard)

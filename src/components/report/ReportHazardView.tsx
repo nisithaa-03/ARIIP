@@ -22,13 +22,7 @@ import {
   Info
 } from 'lucide-react';
 import indianPotholeImg from '../../assets/images/indian_road_pothole_1790739714987.jpg';
-import indianCrackImg from '../../assets/images/indian_road_crack_1790739780245.jpg';
-import indianWaterlogImg from '../../assets/images/indian_road_waterlog_1790739755508.jpg';
-import indianManholeImg from '../../assets/images/indian_open_manhole_1790739733586.jpg';
-import indianSignalImg from '../../assets/images/indian_traffic_signal_1790739797320.jpg';
-import indianDividerImg from '../../assets/images/indian_road_divider_1790740026519.jpg';
-import indianOpenDrainImg from '../../assets/images/indian_open_drain_1790740040367.jpg';
-import { Incident } from '../../types/infrastructure';
+import type { DepartmentName, Incident } from "../../types/infrastructure";
 import {
   INDIAN_STATES,
   ALL_INDIAN_CITIES,
@@ -230,6 +224,18 @@ export const ReportHazardView: React.FC<ReportHazardViewProps> = ({
   const [coverage, setCoverage] = useState<number | null>(null);
   const [estimatedSeverity, setEstimatedSeverity] = useState<'Critical' | 'High' | 'Medium' | 'Low' | 'Unknown'>('High');
   const [recommendedDept, setRecommendedDept] = useState<string>('Roads Department');
+  
+const [savedBackendIncident, setSavedBackendIncident] = useState<{
+  incident_id: string;
+  issue: string;
+  department: string;
+  severity: string;
+  confidence: number;
+  latitude: number | null;
+  longitude: number | null;
+  status: string;
+} | null>(null);
+
   const [selectedCandidateIndex, setSelectedCandidateIndex] = useState<number>(0);
 
   // 3. Additional details
@@ -304,14 +310,15 @@ export const ReportHazardView: React.FC<ReportHazardViewProps> = ({
     setStream(null);
   };
 
-  const requestLiveDetections = async (
+  
+const requestLiveDetections = async (
   file: File
 ): Promise<HazardDetection[]> => {
   const formData = new FormData();
   formData.append("file", file);
 
   const response = await fetch(
-    "http://127.0.0.1:8000/live-detect",
+    "http://127.0.0.1:8000/detect-hazard",
     {
       method: "POST",
       body: formData,
@@ -319,79 +326,97 @@ export const ReportHazardView: React.FC<ReportHazardViewProps> = ({
   );
 
   if (!response.ok) {
+    const errorText = await response.text();
     throw new Error(
-      `Live detection failed with HTTP status ${response.status}.`
+      `Detection failed: HTTP ${response.status} - ${errorText}`
     );
   }
 
+  // Read the response body only once.
   const payload: unknown = await response.json();
 
   console.log("RAW LIVE DETECTION RESPONSE:", payload);
 
-  if (
-    typeof payload !== "object" ||
-    payload === null ||
-    !("detections" in payload) ||
-    !Array.isArray(payload.detections)
-  ) {
-    console.error("Invalid backend response:", payload);
-    throw new Error(
-      "Backend response does not contain a detections array."
+  if (typeof payload !== "object" || payload === null) {
+    throw new Error("Invalid detection response from backend.");
+  }
+
+  const data = payload as Record<string, unknown>;
+
+  // Update the summary shown in the UI.
+  if (typeof data.issue === "string") {
+    setDetectedIssue(data.issue);
+  }
+
+  if (typeof data.confidence === "number") {
+    setConfidence(data.confidence);
+  }
+
+  setDepthScore(
+    typeof data.depth_score === "number"
+      ? data.depth_score
+      : null
+  );
+
+  setCoverage(
+    typeof data.coverage === "number"
+      ? data.coverage
+      : null
+  );
+
+  if (typeof data.severity === "string") {
+    setEstimatedSeverity(
+      data.severity as
+        | "Critical"
+        | "High"
+        | "Medium"
+        | "Low"
+        | "Unknown"
     );
+  }
+
+  if (typeof data.department === "string") {
+    setRecommendedDept(data.department);
+  }
+
+  // Support the backend response containing a detections array.
+  if (!Array.isArray(data.detections)) {
+    console.error(
+      "Backend response does not contain a detections array:",
+      payload
+    );
+    return [];
   }
 
   const validDetections: HazardDetection[] = [];
 
-  for (const item of payload.detections) {
-    if (typeof item !== "object" || item === null) {
-      continue;
-    }
+  for (const item of data.detections) {
+    if (typeof item !== "object" || item === null) continue;
 
     const detection = item as Record<string, unknown>;
     const bbox = detection.bbox;
-    const confidence = detection.confidence;
 
     if (
       typeof detection.class !== "string" ||
-      typeof confidence !== "number" ||
-      !Number.isFinite(confidence) ||
-      confidence < 0 ||
-      confidence > 1 ||
+      typeof detection.confidence !== "number" ||
       !Array.isArray(bbox) ||
       bbox.length !== 4 ||
       !bbox.every(
-        (coordinate) =>
-          typeof coordinate === "number" &&
-          Number.isFinite(coordinate)
+        (value) => typeof value === "number" && Number.isFinite(value)
       )
     ) {
-      console.warn("Skipping invalid detection:", detection);
+      console.warn("Skipping invalid detection:", item);
       continue;
     }
 
-    validDetections.push({
-      class: detection.class,
-      confidence,
-      bbox: bbox as [number, number, number, number],
-      severity:
-        typeof detection.severity === "string"
-          ? detection.severity
-          : "Unknown",
-      depth_score:
-        typeof detection.depth_score === "number"
-          ? detection.depth_score
-          : null,
-      coverage:
-        typeof detection.coverage === "number"
-          ? detection.coverage
-          : null,
-    });
+    validDetections.push(item as HazardDetection);
   }
 
-  console.log("VALID DETECTIONS FOR DRAWING:", validDetections);
+  console.log("Validated detections:", validDetections);
 
   return validDetections;
 };
+
   useEffect(() => {
     drawDetections(
       overlayCanvasRef.current,
@@ -453,9 +478,8 @@ useEffect(() => {
       return;
     }
 
-    inFlight = true;
-    setVideoDetections([]);
-    try {
+      inFlight = true;
+      try {
       captureCanvas.width = video.videoWidth;
       captureCanvas.height = video.videoHeight;
 
@@ -492,20 +516,26 @@ useEffect(() => {
         { type: "image/jpeg" }
       );
 
-      const detections = await requestLiveDetections(frame);
+      
+const detections = await requestLiveDetections(frame);
 
 console.log("Live detections for overlay:", detections);
+console.log("LIVE DETECTIONS:", detections);
+console.log("VIDEO SIZE:", video.videoWidth, video.videoHeight);
+console.log(
+  "CANVAS SIZE:",
+  videoOverlayCanvasRef.current?.clientWidth,
+  videoOverlayCanvasRef.current?.clientHeight
+);
+
 setVideoDetections(detections);
 
-// Update the overlay for every frame.
-// Empty detections clear any old bounding boxes.
-setVideoDetections(detections);
-    } catch (error) {
-      console.error("Live camera detection failed:", error);
-    } finally {
-      inFlight = false;
-    }
-  }, 1000);
+} catch (error) {
+  console.error("Live camera detection failed:", error);
+} finally {
+  inFlight = false;
+}
+}, 1000);
 
   return () => window.clearInterval(intervalId);
 }, [cameraOpen, stream]);
@@ -751,7 +781,7 @@ useEffect(() => {
     requestLiveDetections(file)
       .then(setImageDetections)
       .catch((error: unknown) => {
-        console.error("Image live detection failed:", error);
+        console.error("Image detection failed:", error);
         setImageDetections([]);
       });
 
@@ -813,9 +843,24 @@ if (!navigator.onLine) {
       throw new Error(`HTTP Error: ${response.status}`);
     }
 
+    
     const data = await response.json();
 
     console.log("Backend Response:", data);
+
+    
+setSavedBackendIncident({
+  incident_id: data.incident_id,
+  issue: data.issue,
+  department: data.department,
+  severity: data.severity,
+  confidence: data.confidence,
+  latitude: data.latitude,
+  longitude: data.longitude,
+  status: data.status,
+});
+
+
 
     // Use REAL YOLO results
     console.log("Upload Response:", data);
@@ -944,35 +989,91 @@ if (!navigator.onLine) {
   }, [coords.lat, coords.lng]);
 
   // Submit Complaint Handler
-  const handleSubmit = async(e: React.FormEvent) => {
-    e.preventDefault();
-    setIsSubmitting(true);
-    console.log("SUBMIT BUTTON CLICKED");
+  
+const handleSubmit = async (e: React.FormEvent) => {
+  e.preventDefault();
 
-    const ticketNumber = `ARIIP-2026-0${Math.floor(160 + Math.random() * 80)}`;
+  if (!selectedImageFile) {
+    alert("Please upload a hazard image first.");
+    return;
+  }
+
+  if (
+    !navigator.onLine &&
+    detectedIssue !== "Saved Offline"
+  ) {
+    alert("You are offline. Please try again when connected.");
+    return;
+  }
+
+  if (
+    navigator.onLine &&
+    (
+      detectedIssue === "Detection Failed" ||
+      detectedIssue === "Unknown"
+    )
+  ) {
+    alert("Please upload an image and complete AI detection first.");
+    return;
+  }
+
+  setIsSubmitting(true);
+
+  try {
+    const ticketNumber =
+      `ARIIP-2026-0${Math.floor(160 + Math.random() * 80)}`;
+
+    // Keep the same ID for this submission attempt.
     const incidentId = `inc-${Date.now()}`;
-    const fullAddress = `${streetAddress}, ${selectedArea}, ${selectedCityName}, ${selectedState} - India`;
+
+    const fullAddress =
+      `${streetAddress}, ${selectedArea}, ${selectedCityName}, ${selectedState} - India`;
+
+    const issue = detectedIssue.toLowerCase();
+    const recommended = recommendedDept.toLowerCase();
+
+    const assignedDepartment: DepartmentName =
+      issue.includes("manhole") ||
+      issue.includes("open drain") ||
+      recommended.includes("sewer")
+        ? "Sewer Department"
+        : issue.includes("water") ||
+          issue.includes("drain") ||
+          recommended.includes("drainage")
+        ? "Drainage & Stormwater"
+        : issue.includes("signal") ||
+          recommended.includes("traffic")
+        ? "Traffic & Signals"
+        : issue.includes("streetlight") ||
+          recommended.includes("electrical") ||
+          recommended.includes("lighting")
+        ? "Electrical & Lighting"
+        : issue.includes("bridge") ||
+          issue.includes("subsidence") ||
+          issue.includes("guardrail")
+        ? "Structural & Bridges"
+        : "Road Works";
+
     const newIncident: Incident = {
       id: incidentId,
       ticketNumber,
       title: detectedIssue,
-      type: detectedIssue.toLowerCase().includes("pothole")
+      type: issue.includes("pothole")
         ? "pothole"
-        : detectedIssue.toLowerCase().includes("manhole")
+        : issue.includes("manhole")
         ? "manhole"
-        : detectedIssue.toLowerCase().includes("water")
+        : issue.includes("water")
         ? "waterlogging"
-        : "crack",
+        : issue.includes("signal")
+        ? "signal"
+        : issue.includes("streetlight")
+        ? "streetlight"
+        : issue.includes("crack")
+        ? "crack"
+        : "other",
       severity: estimatedSeverity.toLowerCase() as any,
       status: "created",
-      department:
-        recommendedDept.includes("Sewer")
-          ? "Sewer Department"
-          : recommendedDept.includes("Drainage")
-          ? "Drainage & Stormwater"
-          : recommendedDept.includes("Traffic")
-          ? "Traffic & Signals"
-          : "Road Works",
+      department: assignedDepartment,
       location: {
         address: fullAddress,
         street: streetAddress,
@@ -990,7 +1091,9 @@ if (!navigator.onLine) {
         identifier: `Citizen Mobile (${contactNumber})`,
         timestamp: "Just now",
       },
-      description: description || `Reported ${detectedIssue} on ${streetAddress} in ${selectedCityName}. Immediate municipal action requested.`,
+      description:
+        description ||
+        `Reported ${detectedIssue} on ${streetAddress} in ${selectedCityName}. Immediate municipal action requested.`,
       imageUrl: selectedPhoto,
       galleryImages: [selectedPhoto],
       imageMetadata: {
@@ -1002,9 +1105,10 @@ if (!navigator.onLine) {
       aiInsights: {
         issue: detectedIssue,
         risk: estimatedSeverity as any,
-        department: recommendedDept as any,
+        department: assignedDepartment,
         verification: "Verified",
-        recommendedAction: "Rapid patch deployment by municipal zone crew.",
+        recommendedAction:
+          "Rapid patch deployment by municipal zone crew.",
         impactLevel: "Direct vehicle collision hazard.",
       },
       timeline: [
@@ -1027,46 +1131,129 @@ if (!navigator.onLine) {
         },
       ],
       priorityScore: estimatedSeverity === "Critical" ? 96 : 85,
-      accidentRiskPercentage: estimatedSeverity === "Critical" ? 92 : 82,
+      accidentRiskPercentage:
+        estimatedSeverity === "Critical" ? 92 : 82,
     };
+
+    // ---------------------------------------
+    // OFFLINE: SAVE LOCALLY FOR LATER SYNC
+    // ---------------------------------------
     if (!navigator.onLine || detectedIssue === "Saved Offline") {
-      try {
-        if (!selectedImageFile) {
-          throw new Error("No image file available for offline storage.");
-        }
+      await saveOfflineIncident({
+        id: newIncident.id,
+        ticketNumber: newIncident.ticketNumber,
+        hazardType: newIncident.title,
+        severity: newIncident.severity,
+        confidence,
+        department: assignedDepartment,
+        latitude: newIncident.location.lat,
+        longitude: newIncident.location.lng,
+        address: newIncident.location.address,
+        city: newIncident.location.city,
+        state: newIncident.location.state,
+        description: newIncident.description,
+        imageBlob: selectedImageFile,
+        detectedAt: newIncident.dateReported,
+        syncStatus: "pending_ai",
+        createdAt: new Date().toISOString(),
+        retryCount: 0,
+      });
 
-        const offlineIncident = {
-          id: newIncident.id,
-          ticketNumber: newIncident.ticketNumber,
-          hazardType: newIncident.title,
-          severity: newIncident.severity,
-          confidence,
-          department: recommendedDept,
-          latitude: newIncident.location.lat,
-          longitude: newIncident.location.lng,
-          address: newIncident.location.address,
-          city: newIncident.location.city,
-          state: newIncident.location.state,
-          description: newIncident.description,
-          imageBlob: selectedImageFile,
-          detectedAt: newIncident.dateReported,
-          syncStatus: "pending_ai" as const,
-          createdAt: new Date().toISOString(),
-          retryCount: 0,
-        };
-
-        await saveOfflineIncident(offlineIncident);
-        console.log("Offline incident queued:", offlineIncident);
-        window.dispatchEvent(new Event("incident-queued"));
-      } catch (error) {
-        console.error("Failed to queue offline incident:", error);
-      }
-    }
-    setTimeout(() => {
-      console.log("Submitting incident:", newIncident);
       onSubmitComplaint(newIncident);
-    }, 800);
-  };
+      window.dispatchEvent(new Event("incident-queued"));
+
+      alert("Complaint saved offline. It will sync when you're online.");
+      return;
+    }
+
+    // ---------------------------------------
+    // ONLINE: SUBMIT TO FASTAPI
+    // ---------------------------------------
+    const formData = new FormData();
+
+    formData.append("file", selectedImageFile);
+    formData.append("incident_id", incidentId);
+    formData.append("hazard_type", detectedIssue);
+    formData.append("severity", estimatedSeverity);
+    formData.append("confidence", String(confidence));
+    formData.append("department", assignedDepartment);
+    formData.append("latitude", String(coords.lat));
+    formData.append("longitude", String(coords.lng));
+
+    const response = await fetch(
+      "http://127.0.0.1:8000/incidents",
+      {
+        method: "POST",
+        body: formData,
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Submission failed (${response.status}): ${errorText}`
+      );
+    }
+
+    const result = await response.json();
+
+    if (!result.success || !result.incident_id) {
+      throw new Error("The backend did not confirm the complaint.");
+    }
+
+    // ---------------------------------------
+    // DUPLICATE FOUND: DO NOT ADD A NEW TICKET
+    // ---------------------------------------
+    if (result.duplicate) {
+      window.dispatchEvent(
+        new CustomEvent("incident-synced", {
+          detail: {
+            localIncidentId: incidentId,
+            backendIncidentId: result.incident_id,
+          },
+        })
+      );
+
+      alert(
+        `A similar active complaint already exists.\n` +
+        `Existing ticket: ${result.incident_id}\n` +
+        `Department: ${result.department}\n` +
+        `Distance: ${result.distance_meters} metres`
+      );
+
+      return;
+    }
+
+    // Use the actual database ID in the frontend.
+    newIncident.id = result.incident_id;
+    newIncident.title = result.issue;
+    newIncident.department = result.department as DepartmentName;
+    newIncident.status = result.status;
+    newIncident.severity = result.severity.toLowerCase() as any;
+    newIncident.aiInsights.department =
+      result.department as DepartmentName;
+
+    console.log("Complaint saved in SQLite:", result);
+
+    onSubmitComplaint(newIncident);
+
+    alert(
+      `Complaint submitted successfully!\n` +
+      `Incident ID: ${result.incident_id}\n` +
+      `Department: ${result.department}`
+    );
+  } catch (error) {
+    console.error("Complaint submission failed:", error);
+
+    alert(
+      error instanceof Error
+        ? error.message
+        : "Failed to submit complaint. Please try again."
+    );
+  } finally {
+    setIsSubmitting(false);
+  }
+};
 
   return (
     <div className="flex-1 bg-[#0b1220] flex flex-col h-[calc(100vh-4rem)] overflow-y-auto select-none p-6 lg:p-8 space-y-6">
@@ -1171,7 +1358,7 @@ if (!navigator.onLine) {
                 <img
                   src={selectedPhoto}
                   alt="Selected hazard"
-                  className="w-full h-32 object-fill rounded-xl"
+                  className="w-full h-32 object-contain rounded-xl bg-black"
                   onLoad={(event) => {
                     const image = event.currentTarget;
                     setImageDimensions({
@@ -1468,25 +1655,26 @@ if (!navigator.onLine) {
         <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center">
           <div className="bg-[#111928] p-4 rounded-2xl w-[90%] max-w-xl">
             <h2 className="text-white text-xl font-bold mb-4">Capture Hazard</h2>
-            <div className="relative w-full h-[400px]">
+            <div className="relative w-full h-[400px] overflow-hidden rounded-xl bg-black">
               <video
                 ref={videoRef}
                 autoPlay
                 playsInline
                 muted
-                className="w-full h-full object-fill rounded-xl bg-black"
+                className="absolute inset-0 w-full h-full object-contain"
               />
               <canvas
                 ref={videoOverlayCanvasRef}
                 aria-hidden="true"
-                className="absolute inset-0 z-10 h-full w-full rounded-xl pointer-events-none"
+                className="absolute inset-0 z-10 w-full h-full pointer-events-none"
               />
             </div>
+
             <canvas ref={canvasRef} className="hidden" />
             <div className="flex gap-3 mt-4">
               <button
                 type="button"
-                onClick={capturePhoto}
+                onClick={() => void capturePhoto()}
                 className="flex-1 bg-green-600 hover:bg-green-700 text-white py-3 rounded-xl font-semibold"
               >
                 Capture

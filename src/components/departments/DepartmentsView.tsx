@@ -76,6 +76,15 @@ export const DepartmentsView: React.FC<DepartmentsViewProps> = ({
         slaHours: "4 hrs",
       };
     }
+    
+if (
+  new Date(incident.dateReported).getTime() >=
+  new Date(acc[dept].latestIncidentDate || 0).getTime()
+) {
+  acc[dept].activeHazardImg = incident.imageUrl;
+  acc[dept].sampleIssue = incident.title;
+  acc[dept].latestIncidentDate = incident.dateReported;
+}
 
     if (
       incident.status === "created" ||

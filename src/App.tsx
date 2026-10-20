@@ -17,6 +17,23 @@ import { VerificationQueueView } from './components/verification/VerificationQue
 import { SettingsView } from './components/settings/SettingsView';
 import { getCityByName, DEFAULT_INDIAN_CITY } from './data/indianLocations';
 
+const toApiImageUrl = (imagePath?: string | null) => {
+  if (!imagePath) return '';
+
+  const normalizedPath = imagePath.replace(/\\/g, '/');
+
+  if (/^https?:\/\//i.test(normalizedPath)) {
+    return normalizedPath;
+  }
+
+  const relativePath = normalizedPath.includes('/uploads/')
+    ? normalizedPath.split('/uploads/')[1]
+    : normalizedPath.startsWith('uploads/')
+      ? normalizedPath.replace(/^uploads\//, '')
+      : normalizedPath.replace(/^.*?(?:\/|\\)uploads(?:\/|\\)/, '');
+
+  return `http://127.0.0.1:8000/uploads/${relativePath.replace(/^\/+/, '')}`;
+};
 
 export default function App() {
 
@@ -46,7 +63,7 @@ export default function App() {
               ? item.confidence * 100
               : item.confidence
           ),
-          imageUrl: `http://127.0.0.1:8000/${item.image_path.replace(/\\/g, "/")}`,
+          imageUrl: toApiImageUrl(item.image_path),
           location: {
             city: "Chennai",
             state: "Tamil Nadu",
@@ -190,15 +207,22 @@ export default function App() {
   };
 
   // Storing country, state, city, lat, and lng for EVERY complaint
-  const handleNewIncident = (newInc: Incident) => {
+  
+const handleNewIncident = (newInc: Incident) => {
+  console.log("New complaint:", newInc);
+  console.log("Assigned department:", newInc.department);
+
   setIncidents((prev) => [newInc, ...prev]);
 
   setSelectedCity(newInc.location.city);
   setSelectedState(newInc.location.state);
   setIsAllIndia(false);
   setSelectedIncidentId(newInc.id);
-  setActiveTab('complaints');
+
+  // Open the Departments page after submission
+  setActiveTab("departments");
 };
+
   const handleMarkNotificationRead = (id: string) => {
     setNotifications((prev) =>
       prev.map((n) => (n.id === id ? { ...n, read: true } : n))
